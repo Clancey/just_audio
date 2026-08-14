@@ -2,6 +2,7 @@ package com.ryanheise.just_audio;
 
 import androidx.media3.exoplayer.audio.TeeAudioProcessor.AudioBufferSink;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A process-wide hook for observing decoded PCM on its way to the audio device.
@@ -17,17 +18,23 @@ public final class PcmTap {
         /**
          * Called when the sample format changes, including once before the first buffer.
          *
+         * @param sourceId Identifies the player the samples came from. Several players can be
+         *     audible at once — a crossfade is two — and each has its own thread, format and
+         *     timeline, so a listener must keep their samples apart rather than pooling them.
          * @param encoding One of the {@code androidx.media3.common.C.ENCODING_PCM_*} constants.
          */
-        void onPcmFormat(int sampleRateHz, int channelCount, int encoding);
+        void onPcmFormat(int sourceId, int sampleRateHz, int channelCount, int encoding);
 
         /**
          * Called for each buffer of interleaved samples.
          *
          * @param buffer A read-only buffer that is only valid for the duration of this call.
          */
-        void onPcmBuffer(ByteBuffer buffer, int sampleRateHz, int channelCount, int encoding);
+        void onPcmBuffer(
+                int sourceId, ByteBuffer buffer, int sampleRateHz, int channelCount, int encoding);
     }
+
+    private static final AtomicInteger nextSourceId = new AtomicInteger(1);
 
     private static volatile Listener listener;
 
@@ -53,6 +60,7 @@ public final class PcmTap {
      * change and a buffer can be handled by different threads across a flush, so they are volatile.
      */
     private static final class Sink implements AudioBufferSink {
+        private final int sourceId = nextSourceId.getAndIncrement();
         private volatile int sampleRateHz;
         private volatile int channelCount;
         private volatile int encoding;
@@ -64,7 +72,7 @@ public final class PcmTap {
             this.encoding = encoding;
             final Listener current = listener;
             if (current != null) {
-                current.onPcmFormat(sampleRateHz, channelCount, encoding);
+                current.onPcmFormat(sourceId, sampleRateHz, channelCount, encoding);
             }
         }
 
@@ -72,7 +80,7 @@ public final class PcmTap {
         public void handleBuffer(ByteBuffer buffer) {
             final Listener current = listener;
             if (current != null) {
-                current.onPcmBuffer(buffer, sampleRateHz, channelCount, encoding);
+                current.onPcmBuffer(sourceId, buffer, sampleRateHz, channelCount, encoding);
             }
         }
     }
